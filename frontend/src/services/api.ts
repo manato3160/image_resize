@@ -1,4 +1,5 @@
 import axios from 'axios'
+import JSZip from 'jszip'
 import { ResizeMode, UpscaleMethod } from '../App'
 
 // Vercel Functionsを使用する場合は、環境変数が設定されていない場合は相対パスを使用
@@ -134,10 +135,21 @@ export interface ProcessMultipleImagesResult {
   errors?: string[] | null
 }
 
+export interface ProcessMultipleImagesProgress {
+  current: number
+  total: number
+  filename: string
+  status: 'processing' | 'completed' | 'error'
+}
+
+/**
+ * 複数画像を1枚ずつ順次処理（Vercelの4.5MB制限を回避）
+ */
 export async function processMultipleImages(
   files: File[],
   mode: ResizeMode,
-  upscaleMethod: UpscaleMethod
+  upscaleMethod: UpscaleMethod,
+  onProgress?: (progress: ProcessMultipleImagesProgress) => void
 ): Promise<ProcessMultipleImagesResult> {
   // ファイル数チェック
   if (files.length === 0) {
@@ -162,91 +174,92 @@ export async function processMultipleImages(
     }
   }
 
-  // すべてのファイルをBase64エンコード
-  const imagesData = await Promise.all(
-    files.map(async (file) => {
-      const fileBase64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => {
-          const result = reader.result as string
-          const base64 = result.split(',')[1]
-          resolve(base64)
-        }
-        reader.onerror = reject
-        reader.readAsDataURL(file)
-      })
-      return {
-        image: fileBase64,
-        filename: file.name
-      }
-    })
-  )
+  const processedImages: ProcessedImage[] = []
+  const errors: string[] = []
 
-  // Vercel Functions用のJSON形式で送信
-  const requestData = {
-    images: imagesData,
-    mode: mode,
-    upscale_method: upscaleMethod
+  // 1枚ずつ順次処理（Vercelの4.5MB制限を回避）
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i]
+    
+    try {
+      // プログレス通知
+      if (onProgress) {
+        onProgress({
+          current: i + 1,
+          total: files.length,
+          filename: file.name,
+          status: 'processing'
+        })
+      }
+
+      // 画像を処理（既存のprocessImage関数を使用）
+      const processedImageUrl = await processImage(file, mode, upscaleMethod)
+
+      processedImages.push({
+        filename: file.name,
+        data: processedImageUrl,
+        content_type: 'image/jpeg'
+      })
+
+      // プログレス通知（完了）
+      if (onProgress) {
+        onProgress({
+          current: i + 1,
+          total: files.length,
+          filename: file.name,
+          status: 'completed'
+        })
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : '不明なエラー'
+      errors.push(`${file.name}: ${errorMessage}`)
+
+      // プログレス通知（エラー）
+      if (onProgress) {
+        onProgress({
+          current: i + 1,
+          total: files.length,
+          filename: file.name,
+          status: 'error'
+        })
+      }
+    }
   }
 
-  try {
-    const response = await axios.post<ProcessMultipleImagesResult>(
-      `${API_BASE_URL}/api/process-multiple`,
-      requestData,
-      {
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        timeout: 60000, // 60秒（Vercel Functionsの制限を考慮）
-      }
-    )
+  // すべての画像の処理に失敗した場合
+  if (processedImages.length === 0) {
+    throw new Error(`すべての画像の処理に失敗しました:\n${errors.join('\n')}`)
+  }
 
-    return response.data
-  } catch (error) {
-    if (axios.isAxiosError(error)) {
-      if (error.response) {
-        // エラーレスポンスの詳細を取得
-        const errorData = error.response.data
-        let errorMessage = '画像処理に失敗しました'
-        
-        // エラーレスポンスがJSONの場合
-        if (typeof errorData === 'object' && errorData !== null) {
-          // デバッグ情報を含むエラーメッセージを構築
-          if (errorData.error) {
-            errorMessage = errorData.error
-            // デバッグ情報があれば追加
-            if (errorData.received_method) {
-              errorMessage += ` (受信メソッド: ${errorData.received_method})`
-            }
-            if (errorData.request_keys) {
-              errorMessage += ` (リクエストキー: ${errorData.request_keys.join(', ')})`
-            }
-          } else if (errorData.detail) {
-            errorMessage = errorData.detail
-          } else if (errorData.message) {
-            errorMessage = errorData.message
-          } else {
-            errorMessage = `エラー: ${error.response.status} ${error.response.statusText}`
-          }
-        } else if (typeof errorData === 'string') {
-          errorMessage = errorData
-        } else {
-          errorMessage = `エラー: ${error.response.status} ${error.response.statusText}`
-        }
-        
-        throw new Error(errorMessage)
-      } else if (error.request) {
-        throw new Error(
-          'サーバーに接続できませんでした。バックエンドが起動しているか確認してください。'
-        )
-      } else if (error.code === 'ECONNABORTED') {
-        throw new Error('リクエストがタイムアウトしました。画像が大きすぎる可能性があります。')
-      }
+  // ZIPファイルを作成（フロントエンドで作成）
+  const zip = new JSZip()
+  
+  for (const img of processedImages) {
+    // data:image/jpeg;base64,XXXXX から base64 部分を抽出
+    const base64Data = img.data.split(',')[1]
+    // Base64をバイナリに変換してZIPに追加
+    zip.file(img.filename, base64Data, { base64: true })
+  }
+
+  // ZIPをBlobとして生成
+  const zipBlob = await zip.generateAsync({ type: 'blob' })
+  
+  // BlobをBase64 data URLに変換
+  const zipBase64 = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result as string
+      resolve(result)
     }
-    if (error instanceof Error) {
-      throw error
-    }
-    throw new Error('予期しないエラーが発生しました')
+    reader.onerror = reject
+    reader.readAsDataURL(zipBlob)
+  })
+
+  return {
+    images: processedImages,
+    zip_data: zipBase64,
+    zip_filename: 'processed_images.zip',
+    errors: errors.length > 0 ? errors : null
   }
 }
 

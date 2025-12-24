@@ -2,7 +2,7 @@ import { useState } from 'react'
 import ImageUploader from './components/ImageUploader'
 import ResizeOptions from './components/ResizeOptions'
 import Preview from './components/Preview'
-import { processImage, processMultipleImages, ProcessedImage } from './services/api'
+import { processImage, processMultipleImages, ProcessedImage, ProcessMultipleImagesProgress } from './services/api'
 
 export type ResizeMode = 'vertical' | 'horizontal'
 export type UpscaleMethod = 'simple' | 'ai'
@@ -16,6 +16,7 @@ function App() {
   const [processedZipUrl, setProcessedZipUrl] = useState<string | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [progress, setProgress] = useState<ProcessMultipleImagesProgress | null>(null)
 
   const handleFileSelect = (files: File[]) => {
     setSelectedFiles(files)
@@ -36,6 +37,7 @@ function App() {
     setProcessedImageUrl(null)
     setProcessedImages([])
     setProcessedZipUrl(null)
+    setProgress(null)
 
     try {
       if (selectedFiles.length === 1) {
@@ -43,15 +45,28 @@ function App() {
         const imageUrl = await processImage(selectedFiles[0], resizeMode, upscaleMethod)
         setProcessedImageUrl(imageUrl)
       } else {
-        // 複数画像の場合はJSONで返す
-        const result = await processMultipleImages(selectedFiles, resizeMode, upscaleMethod)
+        // 複数画像の場合は1枚ずつ処理（プログレス付き）
+        const result = await processMultipleImages(
+          selectedFiles, 
+          resizeMode, 
+          upscaleMethod,
+          (progressInfo) => {
+            setProgress(progressInfo)
+          }
+        )
         setProcessedImages(result.images)
         setProcessedZipUrl(result.zip_data)
+        
+        // エラーがあれば警告を表示
+        if (result.errors && result.errors.length > 0) {
+          setError(`一部の画像の処理に失敗しました:\n${result.errors.join('\n')}`)
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : '画像処理に失敗しました')
     } finally {
       setIsProcessing(false)
+      setProgress(null)
     }
   }
 
@@ -118,9 +133,34 @@ function App() {
             </button>
           </div>
 
+          {/* プログレス表示 */}
+          {progress && (
+            <div className="bg-white rounded-lg shadow-lg p-6">
+              <div className="mb-2 flex justify-between items-center">
+                <span className="text-sm font-medium text-gray-700">
+                  処理中: {progress.filename}
+                </span>
+                <span className="text-sm font-medium text-indigo-600">
+                  {progress.current} / {progress.total}
+                </span>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-2.5">
+                <div
+                  className="bg-indigo-600 h-2.5 rounded-full transition-all duration-300"
+                  style={{ width: `${(progress.current / progress.total) * 100}%` }}
+                ></div>
+              </div>
+              <div className="mt-2 text-xs text-gray-500 text-center">
+                {progress.status === 'processing' && '画像を処理中...'}
+                {progress.status === 'completed' && '✓ 完了'}
+                {progress.status === 'error' && '✗ エラー'}
+              </div>
+            </div>
+          )}
+
           {/* エラー表示 */}
           {error && (
-            <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg">
+            <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg whitespace-pre-line">
               {error}
             </div>
           )}
