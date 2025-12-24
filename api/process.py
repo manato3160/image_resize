@@ -1,7 +1,12 @@
 import json
 import base64
+import logging
 from io import BytesIO
 from PIL import Image
+
+# ロギング設定
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # 規定サイズ
 VERTICAL_SIZE = (1080, 1350)  # 幅×高さ
@@ -89,70 +94,74 @@ def process_image_sync(image_data: bytes, mode: str) -> bytes:
 
 def handler(req):
     """Vercel Serverless Function handler"""
-    # リクエストオブジェクトが辞書形式かオブジェクト形式かを判定
-    # VercelのPython Functionsは辞書形式のリクエストを渡す可能性がある
-    if isinstance(req, dict):
-        # 辞書形式の場合
-        method = req.get('method') or req.get('httpMethod') or 'GET'
-        body = req.get('body') or req.get('payload')
-        headers = req.get('headers', {})
-    else:
-        # オブジェクト形式の場合
-        method = getattr(req, 'method', None) or getattr(req, 'httpMethod', None) or 'GET'
-        if hasattr(req, 'body'):
-            body = req.body
-        elif hasattr(req, 'get_json'):
-            body = req.get_json()
-        elif hasattr(req, 'get_body'):
-            body = req.get_body()
-        else:
-            body = None
-        headers = getattr(req, 'headers', {})
-    
-    # CORS preflight リクエストを処理
-    if method == 'OPTIONS':
-        return {
-            'statusCode': 200,
-            'headers': {
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'POST, OPTIONS',
-                'Access-Control-Allow-Headers': 'Content-Type',
-            },
-            'body': ''
-        }
-    
-    if method != 'POST':
-        return {
-            'statusCode': 405,
-            'headers': {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*',
-            },
-            'body': json.dumps({'success': False, 'error': 'Method not allowed'})
-        }
-    
     try:
-        # ボディを文字列または辞書に変換
-        if body is None:
+        # リクエストオブジェクトの形式を判定（辞書形式またはオブジェクト形式）
+        if isinstance(req, dict):
+            method = req.get('method') or req.get('httpMethod', 'GET')
+            body_raw = req.get('body') or req.get('payload')
+        else:
+            method = getattr(req, 'method', None) or getattr(req, 'httpMethod', 'GET')
+            body_raw = getattr(req, 'body', None)
+        
+        logger.info(f"リクエスト受信: method={method}, body_type={type(body_raw)}")
+        
+        # CORS preflight リクエストを処理
+        if method == 'OPTIONS':
+            return {
+                'statusCode': 200,
+                'headers': {
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+                    'Access-Control-Allow-Headers': 'Content-Type',
+                },
+                'body': ''
+            }
+        
+        if method != 'POST':
+            logger.warning(f"許可されていないメソッド: {method}")
+            return {
+                'statusCode': 405,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*',
+                },
+                'body': json.dumps({'success': False, 'error': 'Method not allowed'})
+            }
+        
+        # ボディの処理
+        if body_raw is None:
+            logger.error("リクエストボディが空です")
             raise ValueError('リクエストボディが空です')
         
-        if isinstance(body, dict):
-            data = body
-        elif isinstance(body, str):
-            data = json.loads(body)
-        elif isinstance(body, bytes):
-            data = json.loads(body.decode('utf-8'))
+        # ボディを文字列または辞書に変換
+        if isinstance(body_raw, dict):
+            data = body_raw
+        elif isinstance(body_raw, str):
+            data = json.loads(body_raw)
+        elif isinstance(body_raw, bytes):
+            data = json.loads(body_raw.decode('utf-8'))
         else:
             # その他の場合は文字列に変換してからパース
-            data = json.loads(str(body))
+            data = json.loads(str(body_raw))
+        
+        logger.info(f"リクエストデータ解析完了: mode={data.get('mode')}, upscale_method={data.get('upscale_method')}")
         
         # 画像データを取得（Base64エンコードされている想定）
-        image_data = base64.b64decode(data.get('image', ''))
+        image_base64 = data.get('image', '')
+        if not image_base64:
+            logger.error("画像データが空です")
+            raise ValueError('画像データが空です')
+        
+        image_data = base64.b64decode(image_base64)
         mode = data.get('mode', 'vertical')
         upscale_method = data.get('upscale_method', 'simple')
         
+        logger.info(f"画像処理開始: mode={mode}, image_size={len(image_data)} bytes")
+        
         # 画像処理（軽量版：AIアップスケールは無効）
         processed_image = process_image_sync(image_data, mode)
+        
+        logger.info(f"画像処理完了: processed_size={len(processed_image)} bytes")
         
         # Base64エンコードして返す
         result_base64 = base64.b64encode(processed_image).decode('utf-8')
@@ -172,6 +181,7 @@ def handler(req):
         }
         
     except Exception as e:
+        logger.error(f"エラー発生: {type(e).__name__}: {str(e)}", exc_info=True)
         return {
             'statusCode': 500,
             'headers': {
@@ -180,6 +190,7 @@ def handler(req):
             },
             'body': json.dumps({
                 'success': False,
-                'error': str(e)
+                'error': str(e),
+                'error_type': type(e).__name__
             })
         }

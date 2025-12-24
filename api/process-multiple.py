@@ -1,8 +1,13 @@
 import json
 import base64
+import logging
 from io import BytesIO
 from PIL import Image
 import zipfile
+
+# ロギング設定
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # 規定サイズ
 VERTICAL_SIZE = (1080, 1350)  # 幅×高さ
@@ -78,67 +83,62 @@ def process_image_sync(image_data: bytes, mode: str) -> bytes:
 
 def handler(req):
     """Vercel Serverless Function handler"""
-    # リクエストオブジェクトが辞書形式かオブジェクト形式かを判定
-    # VercelのPython Functionsは辞書形式のリクエストを渡す可能性がある
-    if isinstance(req, dict):
-        # 辞書形式の場合
-        method = req.get('method') or req.get('httpMethod') or 'GET'
-        body = req.get('body') or req.get('payload')
-        headers = req.get('headers', {})
-    else:
-        # オブジェクト形式の場合
-        method = getattr(req, 'method', None) or getattr(req, 'httpMethod', None) or 'GET'
-        if hasattr(req, 'body'):
-            body = req.body
-        elif hasattr(req, 'get_json'):
-            body = req.get_json()
-        elif hasattr(req, 'get_body'):
-            body = req.get_body()
-        else:
-            body = None
-        headers = getattr(req, 'headers', {})
-    
-    # CORS preflight リクエストを処理
-    if method == 'OPTIONS':
-        return {
-            'statusCode': 200,
-            'headers': {
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'POST, OPTIONS',
-                'Access-Control-Allow-Headers': 'Content-Type',
-            },
-            'body': ''
-        }
-    
-    if method != 'POST':
-        return {
-            'statusCode': 405,
-            'headers': {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*',
-            },
-            'body': json.dumps({'success': False, 'error': 'Method not allowed'})
-        }
-    
     try:
-        # ボディを文字列または辞書に変換
-        if body is None:
+        # リクエストオブジェクトの形式を判定（辞書形式またはオブジェクト形式）
+        if isinstance(req, dict):
+            method = req.get('method') or req.get('httpMethod', 'GET')
+            body_raw = req.get('body') or req.get('payload')
+        else:
+            method = getattr(req, 'method', None) or getattr(req, 'httpMethod', 'GET')
+            body_raw = getattr(req, 'body', None)
+        
+        logger.info(f"複数画像処理リクエスト受信: method={method}, body_type={type(body_raw)}")
+        
+        # CORS preflight リクエストを処理
+        if method == 'OPTIONS':
+            return {
+                'statusCode': 200,
+                'headers': {
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+                    'Access-Control-Allow-Headers': 'Content-Type',
+                },
+                'body': ''
+            }
+        
+        if method != 'POST':
+            logger.warning(f"許可されていないメソッド: {method}")
+            return {
+                'statusCode': 405,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*',
+                },
+                'body': json.dumps({'success': False, 'error': 'Method not allowed'})
+            }
+        
+        # ボディの処理
+        if body_raw is None:
+            logger.error("リクエストボディが空です")
             raise ValueError('リクエストボディが空です')
         
-        if isinstance(body, dict):
-            data = body
-        elif isinstance(body, str):
-            data = json.loads(body)
-        elif isinstance(body, bytes):
-            data = json.loads(body.decode('utf-8'))
+        # ボディを文字列または辞書に変換
+        if isinstance(body_raw, dict):
+            data = body_raw
+        elif isinstance(body_raw, str):
+            data = json.loads(body_raw)
+        elif isinstance(body_raw, bytes):
+            data = json.loads(body_raw.decode('utf-8'))
         else:
             # その他の場合は文字列に変換してからパース
-            data = json.loads(str(body))
+            data = json.loads(str(body_raw))
         
         # 複数画像データを取得
         images_data = data.get('images', [])
         mode = data.get('mode', 'vertical')
         upscale_method = data.get('upscale_method', 'simple')
+        
+        logger.info(f"複数画像処理開始: 画像数={len(images_data)}, mode={mode}")
         
         processed_images = []
         errors = []
@@ -148,11 +148,16 @@ def handler(req):
                 image_base64 = img_data.get('image', '')
                 filename = img_data.get('filename', f'image_{idx+1}.jpg')
                 
+                if not image_base64:
+                    raise ValueError(f"画像データが空です: {filename}")
+                
+                logger.info(f"画像処理中 ({idx+1}/{len(images_data)}): {filename}")
+                
                 # Base64デコード
-                image_data = base64.b64decode(image_base64)
+                image_data_bytes = base64.b64decode(image_base64)
                 
                 # 画像処理
-                processed_image = process_image_sync(image_data, mode)
+                processed_image = process_image_sync(image_data_bytes, mode)
                 
                 # Base64エンコード
                 result_base64 = base64.b64encode(processed_image).decode('utf-8')
@@ -162,11 +167,18 @@ def handler(req):
                     'data': f'data:image/jpeg;base64,{result_base64}',
                     'content_type': 'image/jpeg'
                 })
+                
+                logger.info(f"画像処理完了 ({idx+1}/{len(images_data)}): {filename}")
             except Exception as e:
-                errors.append(f"{img_data.get('filename', f'ファイル{idx+1}')}: {str(e)}")
+                error_msg = f"{img_data.get('filename', f'ファイル{idx+1}')}: {str(e)}"
+                logger.error(f"画像処理エラー: {error_msg}")
+                errors.append(error_msg)
         
         if len(processed_images) == 0:
+            logger.error("すべての画像の処理に失敗しました")
             raise Exception("すべての画像の処理に失敗しました")
+        
+        logger.info(f"ZIPファイル作成中: {len(processed_images)}枚の画像")
         
         # ZIPファイルも作成
         zip_buffer = BytesIO()
@@ -176,6 +188,8 @@ def handler(req):
                 zip_file.writestr(img['filename'], img_bytes)
         zip_buffer.seek(0)
         zip_base64 = base64.b64encode(zip_buffer.read()).decode('utf-8')
+        
+        logger.info(f"複数画像処理完了: 成功={len(processed_images)}, エラー={len(errors)}")
         
         # レスポンス
         return {
@@ -194,6 +208,7 @@ def handler(req):
         }
         
     except Exception as e:
+        logger.error(f"エラー発生: {type(e).__name__}: {str(e)}", exc_info=True)
         return {
             'statusCode': 500,
             'headers': {
@@ -202,6 +217,7 @@ def handler(req):
             },
             'body': json.dumps({
                 'success': False,
-                'error': str(e)
+                'error': str(e),
+                'error_type': type(e).__name__
             })
         }

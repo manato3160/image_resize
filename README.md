@@ -28,9 +28,37 @@
 - Pillow (PIL)
 - Real-ESRGAN (オプション)
 
-## セットアップ
+## クイックスタート（ローカル環境）
 
-### バックエンド
+### 方法1: Docker Compose（最も簡単）
+
+```bash
+docker-compose up
+```
+
+- フロントエンド: http://localhost:5173
+- バックエンド: http://localhost:8000
+
+詳細は [DOCKER_USAGE.md](./DOCKER_USAGE.md) を参照してください。
+
+### 方法2: 自動起動スクリプト
+
+**macOS/Linux:**
+```bash
+chmod +x start-local.sh
+./start-local.sh
+```
+
+**Windows:**
+```cmd
+start-local.bat
+```
+
+これでバックエンドとフロントエンドが自動的に起動します。
+
+### 方法3: 手動起動
+
+#### バックエンド
 
 1. Python仮想環境を作成・有効化:
 ```bash
@@ -56,7 +84,9 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### フロントエンド
+#### フロントエンド
+
+**別のターミナルで:**
 
 1. 依存関係をインストール:
 ```bash
@@ -64,12 +94,90 @@ cd frontend
 npm install
 ```
 
-2. 開発サーバーを起動:
+2. 環境変数を設定（ローカル用）:
+```bash
+# macOS/Linux
+export VITE_API_BASE_URL=http://localhost:8000
+
+# Windows
+set VITE_API_BASE_URL=http://localhost:8000
+```
+
+3. 開発サーバーを起動:
 ```bash
 npm run dev
 ```
 
-3. ブラウザで `http://localhost:5173` を開く
+4. ブラウザで `http://localhost:5173` を開く
+
+## 他の人に使ってもらう方法
+
+詳細は [LOCAL_USAGE.md](./LOCAL_USAGE.md) を参照してください。
+
+### 方法1: ローカルネットワークで共有
+
+同じネットワーク内の他の人に使ってもらう場合：
+
+1. **バックエンドの起動時にホストを指定:**
+   ```bash
+   cd backend
+   source venv/bin/activate
+   uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+   ```
+
+2. **フロントエンドの環境変数を設定:**
+   ```bash
+   # あなたのPCのIPアドレスを確認（例: 192.168.1.100）
+   # macOS/Linux
+   export VITE_API_BASE_URL=http://192.168.1.100:8000
+   
+   # Windows
+   set VITE_API_BASE_URL=http://192.168.1.100:8000
+   ```
+
+3. **フロントエンドを起動:**
+   ```bash
+   cd frontend
+   npm run dev -- --host
+   ```
+
+4. **他の人は `http://あなたのIPアドレス:5173` にアクセス**
+
+### 方法2: バックエンドをクラウドにデプロイ（推奨）
+
+バックエンドのみをクラウドにデプロイし、フロントエンドはローカルで起動する方法：
+
+#### バックエンドのデプロイ（Railway推奨）
+
+1. [Railway](https://railway.app)にアカウントを作成
+2. 新しいプロジェクトを作成
+3. GitHubリポジトリを接続、または`backend`フォルダをアップロード
+4. デプロイ後、生成されたURLをコピー（例: `https://your-app.railway.app`）
+
+#### フロントエンドの起動
+
+```bash
+cd frontend
+export VITE_API_BASE_URL=https://your-app.railway.app  # バックエンドのURL
+npm run dev
+```
+
+### 方法3: ngrokを使用してインターネット経由で共有
+
+1. [ngrok](https://ngrok.com)をインストール
+2. バックエンドを起動
+3. `ngrok http 8000` を実行
+4. 生成されたURLをフロントエンドの環境変数に設定
+
+詳細は [LOCAL_USAGE.md](./LOCAL_USAGE.md) を参照してください。
+
+### 方法4: 完全にローカルで動作（オフライン対応）
+
+インターネット接続なしで動作させる場合：
+
+1. このリポジトリをクローンまたはダウンロード
+2. 上記の「クイックスタート」の手順に従って起動
+3. すべての処理はローカルで完結します
 
 ## 使用方法
 
