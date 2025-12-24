@@ -109,21 +109,27 @@ def handler(req):
         
         # メソッドの取得（複数の可能性を試行）
         method = None
-        for key in ['method', 'httpMethod', 'REQUEST_METHOD', 'requestMethod']:
+        method_keys_tried = []
+        for key in ['method', 'httpMethod', 'REQUEST_METHOD', 'requestMethod', 'METHOD']:
+            method_keys_tried.append(key)
             if key in req:
                 method = req[key]
+                logger.info(f"メソッドを取得: key={key}, value={method}")
                 break
         
         # メソッドが取得できない場合、デフォルトでGETとする
         if not method:
             method = 'GET'
-            logger.warning("メソッドが取得できませんでした。デフォルトでGETを使用します。")
+            logger.warning(f"メソッドが取得できませんでした。試行したキー: {method_keys_tried}")
         
         # ボディの取得（複数の可能性を試行）
         body_raw = None
-        for key in ['body', 'payload', 'BODY', 'requestBody']:
+        body_keys_tried = []
+        for key in ['body', 'payload', 'BODY', 'requestBody', 'data']:
+            body_keys_tried.append(key)
             if key in req:
                 body_raw = req[key]
+                logger.info(f"ボディを取得: key={key}, type={type(body_raw)}")
                 break
         
         headers = req.get('headers', {}) or req.get('HEADERS', {})
@@ -145,18 +151,25 @@ def handler(req):
         # POSTメソッドのみ許可
         if method.upper() != 'POST':
             logger.warning(f"許可されていないメソッド: {method}")
+            req_keys = list(req.keys())
+            method_keys_tried = ['method', 'httpMethod', 'REQUEST_METHOD', 'requestMethod', 'METHOD']
+            body_keys_tried = ['body', 'payload', 'BODY', 'requestBody', 'data']
+            error_response = {
+                'success': False,
+                'error': f'Method not allowed: {method}',
+                'received_method': method,
+                'request_keys': req_keys,
+                'method_keys_tried': method_keys_tried,
+                'body_keys_tried': body_keys_tried,
+                'request_sample': {k: str(v)[:100] for k, v in list(req.items())[:5]}  # 最初の5つのキーと値のサンプル
+            }
             return {
                 'statusCode': 405,
                 'headers': {
                     'Content-Type': 'application/json',
                     'Access-Control-Allow-Origin': '*',
                 },
-                'body': json.dumps({
-                    'success': False,
-                    'error': f'Method not allowed: {method}',
-                    'received_method': method,
-                    'request_keys': list(req.keys())
-                })
+                'body': json.dumps(error_response, ensure_ascii=False)
             }
         
         # ボディの処理（Vercelからは文字列または辞書で渡される）

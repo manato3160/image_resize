@@ -155,18 +155,25 @@ def handler(req):
         # POSTメソッドのみ許可
         if method.upper() != 'POST':
             logger.warning(f"許可されていないメソッド: {method}")
+            req_keys = list(req.keys())
+            method_keys_tried = ['method', 'httpMethod', 'REQUEST_METHOD', 'requestMethod', 'METHOD']
+            body_keys_tried = ['body', 'payload', 'BODY', 'requestBody', 'data']
+            error_response = {
+                'success': False,
+                'error': f'Method not allowed: {method}',
+                'received_method': method,
+                'request_keys': req_keys,
+                'method_keys_tried': method_keys_tried,
+                'body_keys_tried': body_keys_tried,
+                'request_sample': {k: str(v)[:100] for k, v in list(req.items())[:5]}  # 最初の5つのキーと値のサンプル
+            }
             return {
                 'statusCode': 405,
                 'headers': {
                     'Content-Type': 'application/json',
                     'Access-Control-Allow-Origin': '*',
                 },
-                'body': json.dumps({
-                    'success': False,
-                    'error': f'Method not allowed: {method}',
-                    'received_method': method,
-                    'request_keys': list(req.keys())
-                })
+                'body': json.dumps(error_response, ensure_ascii=False)
             }
         
         # ボディの処理（Vercelからは文字列または辞書で渡される）
