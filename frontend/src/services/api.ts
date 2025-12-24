@@ -1,12 +1,15 @@
 import axios from 'axios'
 import JSZip from 'jszip'
-import { ResizeMode, UpscaleMethod } from '../App'
 
 // Vercel Functionsを使用する場合は、環境変数が設定されていない場合は相対パスを使用
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
 // 最大ファイルサイズ: 50MB
 const MAX_FILE_SIZE = 50 * 1024 * 1024
+
+// 型定義
+export type ResizeMode = 'vertical' | 'horizontal'
+export type UpscaleMethod = 'simple' | 'ai'
 
 export async function processImage(
   file: File,
@@ -142,27 +145,33 @@ export interface ProcessMultipleImagesProgress {
   status: 'processing' | 'completed' | 'error'
 }
 
+export interface FileWithMode {
+  file: File
+  mode: ResizeMode
+  previewUrl: string
+}
+
 /**
  * 複数画像を1枚ずつ順次処理（Vercelの4.5MB制限を回避）
+ * 各画像に個別のリサイズモードを指定可能
  */
 export async function processMultipleImages(
-  files: File[],
-  mode: ResizeMode,
+  filesWithMode: FileWithMode[],
   upscaleMethod: UpscaleMethod,
   onProgress?: (progress: ProcessMultipleImagesProgress) => void
 ): Promise<ProcessMultipleImagesResult> {
   // ファイル数チェック
-  if (files.length === 0) {
+  if (filesWithMode.length === 0) {
     throw new Error('画像を選択してください')
   }
 
-  if (files.length > 8) {
+  if (filesWithMode.length > 8) {
     throw new Error('画像は最大8枚までアップロードできます')
   }
 
   // 各ファイルの検証
   const maxSize = 50 * 1024 * 1024
-  for (const file of files) {
+  for (const { file } of filesWithMode) {
     if (file.size > maxSize) {
       throw new Error(
         `${file.name}: ファイルサイズが大きすぎます。最大${maxSize / (1024 * 1024)}MBまで対応しています。`
@@ -178,21 +187,21 @@ export async function processMultipleImages(
   const errors: string[] = []
 
   // 1枚ずつ順次処理（Vercelの4.5MB制限を回避）
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i]
+  for (let i = 0; i < filesWithMode.length; i++) {
+    const { file, mode } = filesWithMode[i]
     
     try {
       // プログレス通知
       if (onProgress) {
         onProgress({
           current: i + 1,
-          total: files.length,
+          total: filesWithMode.length,
           filename: file.name,
           status: 'processing'
         })
       }
 
-      // 画像を処理（既存のprocessImage関数を使用）
+      // 画像を処理（各画像のモードを使用）
       const processedImageUrl = await processImage(file, mode, upscaleMethod)
 
       processedImages.push({
@@ -205,7 +214,7 @@ export async function processMultipleImages(
       if (onProgress) {
         onProgress({
           current: i + 1,
-          total: files.length,
+          total: filesWithMode.length,
           filename: file.name,
           status: 'completed'
         })
@@ -218,7 +227,7 @@ export async function processMultipleImages(
       if (onProgress) {
         onProgress({
           current: i + 1,
-          total: files.length,
+          total: filesWithMode.length,
           filename: file.name,
           status: 'error'
         })
