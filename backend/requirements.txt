@@ -1,0 +1,14 @@
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+pillow==10.1.0
+numpy==1.26.2
+opencv-python==4.8.1.78
+# Real-ESRGAN (オプション - AIアップスケール機能に必要)
+# インストールできない場合は、単純リサイズ機能のみが利用可能です
+# pip install realesrgan または
+# pip install git+https://github.com/xinntao/Real-ESRGAN.git
+realesrgan>=0.3.0; python_version >= "3.8"
+python-jose[cryptography]==3.3.0
+python-dotenv==1.0.0
+
