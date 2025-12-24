@@ -102,11 +102,15 @@ def handler(req):
     """
     try:
         # リクエストは常に辞書形式で渡される（Vercel公式仕様）
-        method = req.get('method') or req.get('httpMethod', 'GET')
-        body_raw = req.get('body') or req.get('payload')
-        headers = req.get('headers', {})
+        # デバッグ: リクエストオブジェクトの全体をログに出力
+        logger.info(f"リクエストオブジェクトの型: {type(req)}")
+        logger.info(f"リクエストオブジェクトのキー: {list(req.keys()) if isinstance(req, dict) else 'not a dict'}")
         
-        logger.info(f"リクエスト受信: method={method}, body_type={type(body_raw)}")
+        method = req.get('method') or req.get('httpMethod') or req.get('REQUEST_METHOD', 'GET')
+        body_raw = req.get('body') or req.get('payload') or req.get('BODY')
+        headers = req.get('headers', {}) or req.get('HEADERS', {})
+        
+        logger.info(f"リクエスト受信: method={method}, body_type={type(body_raw)}, body_exists={body_raw is not None}")
         
         # CORS preflight リクエストを処理
         if method == 'OPTIONS':
