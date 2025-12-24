@@ -82,15 +82,18 @@ def process_image_sync(image_data: bytes, mode: str) -> bytes:
     return output.read()
 
 def handler(req):
-    """Vercel Serverless Function handler"""
+    """Vercel Serverless Function handler
+    
+    Vercelの公式ドキュメントに準拠:
+    - リクエストは常に辞書形式で渡される
+    - req.get('method') または req.get('httpMethod') でメソッドを取得
+    - req.get('body') でボディを取得（文字列または辞書）
+    """
     try:
-        # リクエストオブジェクトの形式を判定（辞書形式またはオブジェクト形式）
-        if isinstance(req, dict):
-            method = req.get('method') or req.get('httpMethod', 'GET')
-            body_raw = req.get('body') or req.get('payload')
-        else:
-            method = getattr(req, 'method', None) or getattr(req, 'httpMethod', 'GET')
-            body_raw = getattr(req, 'body', None)
+        # リクエストは常に辞書形式で渡される（Vercel公式仕様）
+        method = req.get('method') or req.get('httpMethod', 'GET')
+        body_raw = req.get('body') or req.get('payload')
+        headers = req.get('headers', {})
         
         logger.info(f"複数画像処理リクエスト受信: method={method}, body_type={type(body_raw)}")
         
@@ -117,18 +120,16 @@ def handler(req):
                 'body': json.dumps({'success': False, 'error': 'Method not allowed'})
             }
         
-        # ボディの処理
+        # ボディの処理（Vercelからは文字列または辞書で渡される）
         if body_raw is None:
             logger.error("リクエストボディが空です")
             raise ValueError('リクエストボディが空です')
         
-        # ボディを文字列または辞書に変換
+        # ボディを文字列または辞書に変換（bytes形式はVercelから渡されない）
         if isinstance(body_raw, dict):
             data = body_raw
         elif isinstance(body_raw, str):
             data = json.loads(body_raw)
-        elif isinstance(body_raw, bytes):
-            data = json.loads(body_raw.decode('utf-8'))
         else:
             # その他の場合は文字列に変換してからパース
             data = json.loads(str(body_raw))
