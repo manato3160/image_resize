@@ -1,4 +1,3 @@
-from http.server import BaseHTTPRequestHandler
 import json
 import base64
 from io import BytesIO
@@ -79,8 +78,11 @@ def process_image_sync(image_data: bytes, mode: str) -> bytes:
 
 def handler(req):
     """Vercel Serverless Function handler"""
+    # リクエストメソッドを安全に取得
+    method = getattr(req, 'method', getattr(req, 'httpMethod', 'GET'))
+    
     # CORS preflight リクエストを処理
-    if req.method == 'OPTIONS':
+    if method == 'OPTIONS':
         return {
             'statusCode': 200,
             'headers': {
@@ -91,7 +93,7 @@ def handler(req):
             'body': ''
         }
     
-    if req.method != 'POST':
+    if method != 'POST':
         return {
             'statusCode': 405,
             'headers': {
@@ -102,12 +104,32 @@ def handler(req):
         }
     
     try:
-        # リクエストボディを取得
-        body = req.body
-        if isinstance(body, str):
-            data = json.loads(body)
+        # リクエストボディを安全に取得
+        body = None
+        # 複数の方法でボディを取得を試みる
+        if hasattr(req, 'body'):
+            body = req.body
+        elif hasattr(req, 'get_json'):
+            body = req.get_json()
+        elif hasattr(req, 'get_body'):
+            body = req.get_body()
         else:
-            data = json.loads(body.decode('utf-8') if isinstance(body, bytes) else body)
+            # リクエストオブジェクト全体をJSONとして扱う
+            body = req
+        
+        # ボディを文字列または辞書に変換
+        if body is None:
+            raise ValueError('リクエストボディが空です')
+        
+        if isinstance(body, dict):
+            data = body
+        elif isinstance(body, str):
+            data = json.loads(body)
+        elif isinstance(body, bytes):
+            data = json.loads(body.decode('utf-8'))
+        else:
+            # その他の場合は文字列に変換してからパース
+            data = json.loads(str(body))
         
         # 複数画像データを取得
         images_data = data.get('images', [])
