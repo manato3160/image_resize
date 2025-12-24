@@ -16,13 +16,15 @@ export type { ResizeMode, UpscaleMethod }
 
 function App() {
   const [selectedFiles, setSelectedFiles] = useState<FileWithMode[]>([])
-  const [upscaleMethod, setUpscaleMethod] = useState<UpscaleMethod>('simple')
   const [processedImageUrl, setProcessedImageUrl] = useState<string | null>(null)
   const [processedImages, setProcessedImages] = useState<ProcessedImage[]>([])
   const [processedZipUrl, setProcessedZipUrl] = useState<string | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [progress, setProgress] = useState<ProcessMultipleImagesProgress | null>(null)
+  
+  // 高解像度化方法は常に'simple'を使用
+  const upscaleMethod: UpscaleMethod = 'simple'
 
   const handleFileSelect = async (files: File[]) => {
     // 各ファイルにデフォルトのモード（vertical）とプレビューURLを設定
@@ -199,38 +201,6 @@ function App() {
             </div>
           )}
 
-          {/* オプション選択（高解像度化のみ） */}
-          {selectedFiles.length > 0 && (
-            <div className="bg-white rounded-lg shadow-lg p-6">
-              <h2 className="text-2xl font-semibold mb-4 text-gray-700">
-                3. 高解像度化オプション
-              </h2>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  高解像度化方法
-                </label>
-                <div className="flex gap-4">
-                  <button
-                    onClick={() => setUpscaleMethod('simple')}
-                    className={`flex-1 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
-                      upscaleMethod === 'simple'
-                        ? 'bg-indigo-600 text-white'
-                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                    }`}
-                  >
-                    シンプル（高速）
-                  </button>
-                  <button
-                    onClick={() => setUpscaleMethod('ai')}
-                    disabled
-                    className="flex-1 px-4 py-3 rounded-lg text-sm font-medium bg-gray-100 text-gray-400 cursor-not-allowed"
-                  >
-                    AI（現在利用不可）
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* 処理ボタン */}
           {selectedFiles.length > 0 && (
@@ -281,7 +251,7 @@ function App() {
           {processedImageUrl && (
             <div className="bg-white rounded-lg shadow-lg p-6">
               <h2 className="text-2xl font-semibold mb-4 text-gray-700">
-                4. 処理結果
+                3. 処理結果
               </h2>
               <Preview imageUrl={processedImageUrl} />
             </div>
@@ -291,7 +261,7 @@ function App() {
           {processedImages.length > 0 && (
             <div className="bg-white rounded-lg shadow-lg p-6">
               <h2 className="text-2xl font-semibold mb-4 text-gray-700">
-                4. 処理結果 ({processedImages.length}枚)
+                3. 処理結果 ({processedImages.length}枚)
               </h2>
               
               {/* 画像グリッド */}
