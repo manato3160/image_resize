@@ -76,11 +76,35 @@ export async function processImage(
             throw new Error('画像処理に失敗しました')
           }
         }
-        // 通常のエラーレスポンス
-        const errorMessage =
-          error.response.data?.detail ||
-          error.response.data?.message ||
-          `エラー: ${error.response.status} ${error.response.statusText}`
+        // エラーレスポンスの詳細を取得
+        const errorData = error.response.data
+        let errorMessage = '画像処理に失敗しました'
+        
+        // エラーレスポンスがJSONの場合
+        if (typeof errorData === 'object' && errorData !== null) {
+          // デバッグ情報を含むエラーメッセージを構築
+          if (errorData.error) {
+            errorMessage = errorData.error
+            // デバッグ情報があれば追加
+            if (errorData.received_method) {
+              errorMessage += ` (受信メソッド: ${errorData.received_method})`
+            }
+            if (errorData.request_keys) {
+              errorMessage += ` (リクエストキー: ${errorData.request_keys.join(', ')})`
+            }
+          } else if (errorData.detail) {
+            errorMessage = errorData.detail
+          } else if (errorData.message) {
+            errorMessage = errorData.message
+          } else {
+            errorMessage = `エラー: ${error.response.status} ${error.response.statusText}`
+          }
+        } else if (typeof errorData === 'string') {
+          errorMessage = errorData
+        } else {
+          errorMessage = `エラー: ${error.response.status} ${error.response.statusText}`
+        }
+        
         throw new Error(errorMessage)
       } else if (error.request) {
         throw new Error(
@@ -181,11 +205,35 @@ export async function processMultipleImages(
   } catch (error) {
     if (axios.isAxiosError(error)) {
       if (error.response) {
-        // 通常のエラーレスポンス
-        const errorMessage =
-          error.response.data?.detail ||
-          error.response.data?.message ||
-          `エラー: ${error.response.status} ${error.response.statusText}`
+        // エラーレスポンスの詳細を取得
+        const errorData = error.response.data
+        let errorMessage = '画像処理に失敗しました'
+        
+        // エラーレスポンスがJSONの場合
+        if (typeof errorData === 'object' && errorData !== null) {
+          // デバッグ情報を含むエラーメッセージを構築
+          if (errorData.error) {
+            errorMessage = errorData.error
+            // デバッグ情報があれば追加
+            if (errorData.received_method) {
+              errorMessage += ` (受信メソッド: ${errorData.received_method})`
+            }
+            if (errorData.request_keys) {
+              errorMessage += ` (リクエストキー: ${errorData.request_keys.join(', ')})`
+            }
+          } else if (errorData.detail) {
+            errorMessage = errorData.detail
+          } else if (errorData.message) {
+            errorMessage = errorData.message
+          } else {
+            errorMessage = `エラー: ${error.response.status} ${error.response.statusText}`
+          }
+        } else if (typeof errorData === 'string') {
+          errorMessage = errorData
+        } else {
+          errorMessage = `エラー: ${error.response.status} ${error.response.statusText}`
+        }
+        
         throw new Error(errorMessage)
       } else if (error.request) {
         throw new Error(
