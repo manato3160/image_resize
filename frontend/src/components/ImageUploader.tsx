@@ -19,7 +19,7 @@ export default function ImageUploader({ onFileSelect, maxFiles = 8 }: ImageUploa
         return
       }
 
-      files.forEach((file, idx) => {
+      files.forEach((file) => {
         // 画像ファイルかチェック
         if (!file.type.startsWith('image/')) {
           errors.push(`${file.name}: 画像ファイルではありません`)
