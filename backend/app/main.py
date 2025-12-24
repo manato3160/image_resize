@@ -12,9 +12,19 @@ logging.basicConfig(
 app = FastAPI(title="画像リサイズ高解像度化API", version="1.0.0")
 
 # CORS設定
+# 環境変数から許可するオリジンを取得（本番環境用）
+import os
+allowed_origins = [
+    "http://localhost:5173",
+    "http://localhost:3000",
+]
+# 環境変数から追加のオリジンを取得
+if os.getenv("ALLOWED_ORIGINS"):
+    allowed_origins.extend(os.getenv("ALLOWED_ORIGINS").split(","))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
