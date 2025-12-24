@@ -78,8 +78,25 @@ def process_image_sync(image_data: bytes, mode: str) -> bytes:
 
 def handler(req):
     """Vercel Serverless Function handler"""
-    # リクエストメソッドを安全に取得
-    method = getattr(req, 'method', getattr(req, 'httpMethod', 'GET'))
+    # リクエストオブジェクトが辞書形式かオブジェクト形式かを判定
+    # VercelのPython Functionsは辞書形式のリクエストを渡す可能性がある
+    if isinstance(req, dict):
+        # 辞書形式の場合
+        method = req.get('method') or req.get('httpMethod') or 'GET'
+        body = req.get('body') or req.get('payload')
+        headers = req.get('headers', {})
+    else:
+        # オブジェクト形式の場合
+        method = getattr(req, 'method', None) or getattr(req, 'httpMethod', None) or 'GET'
+        if hasattr(req, 'body'):
+            body = req.body
+        elif hasattr(req, 'get_json'):
+            body = req.get_json()
+        elif hasattr(req, 'get_body'):
+            body = req.get_body()
+        else:
+            body = None
+        headers = getattr(req, 'headers', {})
     
     # CORS preflight リクエストを処理
     if method == 'OPTIONS':
@@ -104,19 +121,6 @@ def handler(req):
         }
     
     try:
-        # リクエストボディを安全に取得
-        body = None
-        # 複数の方法でボディを取得を試みる
-        if hasattr(req, 'body'):
-            body = req.body
-        elif hasattr(req, 'get_json'):
-            body = req.get_json()
-        elif hasattr(req, 'get_body'):
-            body = req.get_body()
-        else:
-            # リクエストオブジェクト全体をJSONとして扱う
-            body = req
-        
         # ボディを文字列または辞書に変換
         if body is None:
             raise ValueError('リクエストボディが空です')
