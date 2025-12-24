@@ -90,19 +90,48 @@ def handler(req):
     - req.get('body') でボディを取得（文字列または辞書）
     """
     try:
-        # リクエストは常に辞書形式で渡される（Vercel公式仕様）
-        # デバッグ: リクエストオブジェクトの全体をログに出力
-        logger.info(f"リクエストオブジェクトの型: {type(req)}")
-        logger.info(f"リクエストオブジェクトのキー: {list(req.keys()) if isinstance(req, dict) else 'not a dict'}")
+        # リクエストオブジェクトの形式を確認
+        # VercelのPython Functionsは、リクエストを辞書形式で渡す
+        if not isinstance(req, dict):
+            logger.error(f"リクエストが辞書形式ではありません: {type(req)}")
+            return {
+                'statusCode': 500,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*',
+                },
+                'body': json.dumps({'success': False, 'error': 'Invalid request format'})
+            }
         
-        method = req.get('method') or req.get('httpMethod') or req.get('REQUEST_METHOD', 'GET')
-        body_raw = req.get('body') or req.get('payload') or req.get('BODY')
+        # デバッグ: リクエストオブジェクトの全体をログに出力
+        logger.info(f"リクエストオブジェクトのキー: {list(req.keys())}")
+        logger.info(f"リクエストオブジェクトの内容: {str(req)[:500]}")  # 最初の500文字のみ
+        
+        # メソッドの取得（複数の可能性を試行）
+        method = None
+        for key in ['method', 'httpMethod', 'REQUEST_METHOD', 'requestMethod']:
+            if key in req:
+                method = req[key]
+                break
+        
+        # メソッドが取得できない場合、デフォルトでGETとする
+        if not method:
+            method = 'GET'
+            logger.warning("メソッドが取得できませんでした。デフォルトでGETを使用します。")
+        
+        # ボディの取得（複数の可能性を試行）
+        body_raw = None
+        for key in ['body', 'payload', 'BODY', 'requestBody']:
+            if key in req:
+                body_raw = req[key]
+                break
+        
         headers = req.get('headers', {}) or req.get('HEADERS', {})
         
         logger.info(f"複数画像処理リクエスト受信: method={method}, body_type={type(body_raw)}, body_exists={body_raw is not None}")
         
         # CORS preflight リクエストを処理
-        if method == 'OPTIONS':
+        if method.upper() == 'OPTIONS':
             return {
                 'statusCode': 200,
                 'headers': {
@@ -113,7 +142,8 @@ def handler(req):
                 'body': ''
             }
         
-        if method != 'POST':
+        # POSTメソッドのみ許可
+        if method.upper() != 'POST':
             logger.warning(f"許可されていないメソッド: {method}")
             return {
                 'statusCode': 405,
@@ -121,7 +151,12 @@ def handler(req):
                     'Content-Type': 'application/json',
                     'Access-Control-Allow-Origin': '*',
                 },
-                'body': json.dumps({'success': False, 'error': 'Method not allowed'})
+                'body': json.dumps({
+                    'success': False,
+                    'error': f'Method not allowed: {method}',
+                    'received_method': method,
+                    'request_keys': list(req.keys())
+                })
             }
         
         # ボディの処理（Vercelからは文字列または辞書で渡される）
