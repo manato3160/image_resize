@@ -4,6 +4,7 @@ import logging
 from io import BytesIO
 from PIL import Image
 import zipfile
+from http.server import BaseHTTPRequestHandler
 
 # ロギング設定
 logging.basicConfig(level=logging.INFO)
@@ -12,6 +13,7 @@ logger = logging.getLogger(__name__)
 # 規定サイズ
 VERTICAL_SIZE = (1080, 1350)  # 幅×高さ
 HORIZONTAL_SIZE = (1350, 1080)  # 幅×高さ
+
 
 def resize_to_target(image: Image.Image, target_size: tuple[int, int]) -> Image.Image:
     """画像を指定サイズにリサイズ（余白なし）"""
@@ -58,6 +60,7 @@ def resize_to_target(image: Image.Image, target_size: tuple[int, int]) -> Image.
             crop_top = (new_height - target_height) // 2
             return resized.crop((0, crop_top, target_width, crop_top + target_height))
 
+
 def process_image_sync(image_data: bytes, mode: str) -> bytes:
     """同期的な画像処理（軽量版：Pillowのみ）"""
     image = Image.open(BytesIO(image_data))
@@ -81,196 +84,152 @@ def process_image_sync(image_data: bytes, mode: str) -> bytes:
     output.seek(0)
     return output.read()
 
-def handler(req):
-    """Vercel Serverless Function handler
-    
-    Vercelの公式ドキュメントに準拠:
-    - リクエストは常に辞書形式で渡される
-    - req.get('method') または req.get('httpMethod') でメソッドを取得
-    - req.get('body') でボディを取得（文字列または辞書）
+
+class handler(BaseHTTPRequestHandler):
     """
-    try:
-        # リクエストオブジェクトの形式を確認
-        # VercelのPython Functionsは、リクエストを辞書形式で渡す
-        if not isinstance(req, dict):
-            logger.error(f"リクエストが辞書形式ではありません: {type(req)}")
-            return {
-                'statusCode': 500,
-                'headers': {
-                    'Content-Type': 'application/json',
-                    'Access-Control-Allow-Origin': '*',
-                },
-                'body': json.dumps({'success': False, 'error': 'Invalid request format'})
-            }
-        
-        # デバッグ: リクエストオブジェクトの全体をログに出力
-        logger.info(f"リクエストオブジェクトのキー: {list(req.keys())}")
-        logger.info(f"リクエストオブジェクトの内容: {str(req)[:500]}")  # 最初の500文字のみ
-        
-        # メソッドの取得（複数の可能性を試行）
-        method = None
-        method_keys_tried = []
-        for key in ['method', 'httpMethod', 'REQUEST_METHOD', 'requestMethod', 'METHOD']:
-            method_keys_tried.append(key)
-            if key in req:
-                method = req[key]
-                logger.info(f"メソッドを取得: key={key}, value={method}")
-                break
-        
-        # メソッドが取得できない場合、デフォルトでGETとする
-        if not method:
-            method = 'GET'
-            logger.warning(f"メソッドが取得できませんでした。試行したキー: {method_keys_tried}")
-        
-        # ボディの取得（複数の可能性を試行）
-        body_raw = None
-        body_keys_tried = []
-        for key in ['body', 'payload', 'BODY', 'requestBody', 'data']:
-            body_keys_tried.append(key)
-            if key in req:
-                body_raw = req[key]
-                logger.info(f"ボディを取得: key={key}, type={type(body_raw)}")
-                break
-        
-        headers = req.get('headers', {}) or req.get('HEADERS', {})
-        
-        logger.info(f"複数画像処理リクエスト受信: method={method}, body_type={type(body_raw)}, body_exists={body_raw is not None}")
-        
-        # CORS preflight リクエストを処理
-        if method.upper() == 'OPTIONS':
-            return {
-                'statusCode': 200,
-                'headers': {
-                    'Access-Control-Allow-Origin': '*',
-                    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-                    'Access-Control-Allow-Headers': 'Content-Type',
-                },
-                'body': ''
-            }
-        
-        # POSTメソッドのみ許可
-        if method.upper() != 'POST':
-            logger.warning(f"許可されていないメソッド: {method}")
-            req_keys = list(req.keys())
-            method_keys_tried = ['method', 'httpMethod', 'REQUEST_METHOD', 'requestMethod', 'METHOD']
-            body_keys_tried = ['body', 'payload', 'BODY', 'requestBody', 'data']
-            error_response = {
-                'success': False,
-                'error': f'Method not allowed: {method}',
-                'received_method': method,
-                'request_keys': req_keys,
-                'method_keys_tried': method_keys_tried,
-                'body_keys_tried': body_keys_tried,
-                'request_sample': {k: str(v)[:100] for k, v in list(req.items())[:5]}  # 最初の5つのキーと値のサンプル
-            }
-            return {
-                'statusCode': 405,
-                'headers': {
-                    'Content-Type': 'application/json',
-                    'Access-Control-Allow-Origin': '*',
-                },
-                'body': json.dumps(error_response, ensure_ascii=False)
-            }
-        
-        # ボディの処理（Vercelからは文字列または辞書で渡される）
-        if body_raw is None:
-            logger.error("リクエストボディが空です")
-            raise ValueError('リクエストボディが空です')
-        
-        # ボディを文字列または辞書に変換（bytes形式はVercelから渡されない）
-        if isinstance(body_raw, dict):
-            data = body_raw
-        elif isinstance(body_raw, str):
-            data = json.loads(body_raw)
-        else:
-            # その他の場合は文字列に変換してからパース
-            data = json.loads(str(body_raw))
-        
-        # 複数画像データを取得
-        images_data = data.get('images', [])
-        mode = data.get('mode', 'vertical')
-        upscale_method = data.get('upscale_method', 'simple')
-        
-        logger.info(f"複数画像処理開始: 画像数={len(images_data)}, mode={mode}")
-        
-        processed_images = []
-        errors = []
-        
-        for idx, img_data in enumerate(images_data):
+    Vercel Serverless Function handler for multiple images
+    
+    Vercelの公式ドキュメントに準拠したBaseHTTPRequestHandlerクラス形式
+    https://vercel.com/docs/functions/runtimes/python
+    """
+    
+    def do_OPTIONS(self):
+        """CORS preflight リクエストを処理"""
+        self.send_response(200)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()
+    
+    def do_POST(self):
+        """POSTリクエストを処理"""
+        try:
+            # Content-Lengthヘッダーを取得
+            content_length = int(self.headers.get('Content-Length', 0))
+            
+            logger.info(f"複数画像処理リクエスト受信: path={self.path}, content_length={content_length}")
+            
+            if content_length == 0:
+                logger.error("リクエストボディが空です")
+                self._send_error_response(400, "リクエストボディが空です")
+                return
+            
+            # リクエストボディを読み込み
+            body_bytes = self.rfile.read(content_length)
+            
+            logger.info(f"ボディ読み込み完了: size={len(body_bytes)} bytes")
+            
+            # JSONをパース
             try:
-                image_base64 = img_data.get('image', '')
-                filename = img_data.get('filename', f'image_{idx+1}.jpg')
-                
-                if not image_base64:
-                    raise ValueError(f"画像データが空です: {filename}")
-                
-                logger.info(f"画像処理中 ({idx+1}/{len(images_data)}): {filename}")
-                
-                # Base64デコード
-                image_data_bytes = base64.b64decode(image_base64)
-                
-                # 画像処理
-                processed_image = process_image_sync(image_data_bytes, mode)
-                
-                # Base64エンコード
-                result_base64 = base64.b64encode(processed_image).decode('utf-8')
-                
-                processed_images.append({
-                    'filename': filename,
-                    'data': f'data:image/jpeg;base64,{result_base64}',
-                    'content_type': 'image/jpeg'
-                })
-                
-                logger.info(f"画像処理完了 ({idx+1}/{len(images_data)}): {filename}")
-            except Exception as e:
-                error_msg = f"{img_data.get('filename', f'ファイル{idx+1}')}: {str(e)}"
-                logger.error(f"画像処理エラー: {error_msg}")
-                errors.append(error_msg)
-        
-        if len(processed_images) == 0:
-            logger.error("すべての画像の処理に失敗しました")
-            raise Exception("すべての画像の処理に失敗しました")
-        
-        logger.info(f"ZIPファイル作成中: {len(processed_images)}枚の画像")
-        
-        # ZIPファイルも作成
-        zip_buffer = BytesIO()
-        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            for img in processed_images:
-                img_bytes = base64.b64decode(img['data'].split(',')[1])
-                zip_file.writestr(img['filename'], img_bytes)
-        zip_buffer.seek(0)
-        zip_base64 = base64.b64encode(zip_buffer.read()).decode('utf-8')
-        
-        logger.info(f"複数画像処理完了: 成功={len(processed_images)}, エラー={len(errors)}")
-        
-        # レスポンス
-        return {
-            'statusCode': 200,
-            'headers': {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*',
-            },
-            'body': json.dumps({
+                body_str = body_bytes.decode('utf-8')
+                data = json.loads(body_str)
+            except (UnicodeDecodeError, json.JSONDecodeError) as e:
+                logger.error(f"JSON パースエラー: {e}")
+                self._send_error_response(400, f"無効なJSON形式: {str(e)}")
+                return
+            
+            logger.info(f"JSON パース成功: keys={list(data.keys())}")
+            
+            # 複数画像データを取得
+            images_data = data.get('images', [])
+            mode = data.get('mode', 'vertical')
+            upscale_method = data.get('upscale_method', 'simple')
+            
+            if not images_data:
+                logger.error("画像データが空です")
+                self._send_error_response(400, "画像データが空です")
+                return
+            
+            logger.info(f"複数画像処理開始: 画像数={len(images_data)}, mode={mode}")
+            
+            processed_images = []
+            errors = []
+            
+            for idx, img_data in enumerate(images_data):
+                try:
+                    image_base64 = img_data.get('image', '')
+                    filename = img_data.get('filename', f'image_{idx+1}.jpg')
+                    
+                    if not image_base64:
+                        raise ValueError(f"画像データが空です: {filename}")
+                    
+                    logger.info(f"画像処理中 ({idx+1}/{len(images_data)}): {filename}")
+                    
+                    # Base64デコード
+                    image_data_bytes = base64.b64decode(image_base64)
+                    
+                    # 画像処理
+                    processed_image = process_image_sync(image_data_bytes, mode)
+                    
+                    # Base64エンコード
+                    result_base64 = base64.b64encode(processed_image).decode('utf-8')
+                    
+                    processed_images.append({
+                        'filename': filename,
+                        'data': f'data:image/jpeg;base64,{result_base64}',
+                        'content_type': 'image/jpeg'
+                    })
+                    
+                    logger.info(f"画像処理完了 ({idx+1}/{len(images_data)}): {filename}")
+                except Exception as e:
+                    error_msg = f"{img_data.get('filename', f'ファイル{idx+1}')}: {str(e)}"
+                    logger.error(f"画像処理エラー: {error_msg}")
+                    errors.append(error_msg)
+            
+            if len(processed_images) == 0:
+                logger.error("すべての画像の処理に失敗しました")
+                self._send_error_response(500, f"すべての画像の処理に失敗しました: {', '.join(errors)}")
+                return
+            
+            logger.info(f"ZIPファイル作成中: {len(processed_images)}枚の画像")
+            
+            # ZIPファイルも作成
+            zip_buffer = BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                for img in processed_images:
+                    img_bytes = base64.b64decode(img['data'].split(',')[1])
+                    zip_file.writestr(img['filename'], img_bytes)
+            zip_buffer.seek(0)
+            zip_base64 = base64.b64encode(zip_buffer.read()).decode('utf-8')
+            
+            logger.info(f"複数画像処理完了: 成功={len(processed_images)}, エラー={len(errors)}")
+            
+            # レスポンス
+            response_data = {
                 'success': True,
                 'images': processed_images,
                 'zip_data': f'data:application/zip;base64,{zip_base64}',
                 'zip_filename': 'processed_images.zip',
                 'errors': errors if errors else None
-            })
-        }
+            }
+            
+            self._send_json_response(200, response_data)
+            logger.info("レスポンス送信完了")
+            
+        except Exception as e:
+            logger.error(f"予期しないエラー: {type(e).__name__}: {str(e)}", exc_info=True)
+            self._send_error_response(500, f"サーバーエラー: {str(e)}")
+    
+    def do_GET(self):
+        """GETリクエストを処理（エラーを返す）"""
+        logger.warning(f"GET リクエストを受信: path={self.path}")
+        self._send_error_response(405, "Method not allowed. Use POST.")
+    
+    def _send_json_response(self, status_code: int, data: dict):
+        """JSON レスポンスを送信"""
+        response_body = json.dumps(data, ensure_ascii=False).encode('utf-8')
         
-    except Exception as e:
-        logger.error(f"エラー発生: {type(e).__name__}: {str(e)}", exc_info=True)
-        return {
-            'statusCode': 500,
-            'headers': {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*',
-            },
-            'body': json.dumps({
-                'success': False,
-                'error': str(e),
-                'error_type': type(e).__name__
-            })
+        self.send_response(status_code)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Content-Length', str(len(response_body)))
+        self.end_headers()
+        self.wfile.write(response_body)
+    
+    def _send_error_response(self, status_code: int, error_message: str):
+        """エラー レスポンスを送信"""
+        error_data = {
+            'success': False,
+            'error': error_message
         }
+        self._send_json_response(status_code, error_data)
