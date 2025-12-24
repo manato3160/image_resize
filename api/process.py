@@ -3,11 +3,6 @@ import json
 import base64
 from io import BytesIO
 from PIL import Image
-import sys
-import os
-
-# 画像処理ロジックをインポートするためにパスを追加
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
 
 # 規定サイズ
 VERTICAL_SIZE = (1080, 1350)  # 幅×高さ
@@ -93,53 +88,72 @@ def process_image_sync(image_data: bytes, mode: str) -> bytes:
     output.seek(0)
     return output.read()
 
-class handler(BaseHTTPRequestHandler):
-    def do_OPTIONS(self):
-        """CORS preflight リクエストを処理"""
-        self.send_response(200)
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
-        self.end_headers()
+def handler(req):
+    """Vercel Serverless Function handler"""
+    # CORS preflight リクエストを処理
+    if req.method == 'OPTIONS':
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'POST, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type',
+            },
+            'body': ''
+        }
     
-    def do_POST(self):
-        try:
-            # リクエストボディを読み込み
-            content_length = int(self.headers.get('Content-Length', 0))
-            post_data = self.rfile.read(content_length)
-            
-            # JSONデータをパース
-            data = json.loads(post_data.decode('utf-8'))
-            
-            # 画像データを取得（Base64エンコードされている想定）
-            image_data = base64.b64decode(data.get('image', ''))
-            mode = data.get('mode', 'vertical')
-            upscale_method = data.get('upscale_method', 'simple')
-            
-            # 画像処理（軽量版：AIアップスケールは無効）
-            processed_image = process_image_sync(image_data, mode)
-            
-            # Base64エンコードして返す
-            result_base64 = base64.b64encode(processed_image).decode('utf-8')
-            
-            # レスポンス
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps({
+    if req.method != 'POST':
+        return {
+            'statusCode': 405,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*',
+            },
+            'body': json.dumps({'success': False, 'error': 'Method not allowed'})
+        }
+    
+    try:
+        # リクエストボディを取得
+        body = req.body
+        if isinstance(body, str):
+            data = json.loads(body)
+        else:
+            data = json.loads(body.decode('utf-8') if isinstance(body, bytes) else body)
+        
+        # 画像データを取得（Base64エンコードされている想定）
+        image_data = base64.b64decode(data.get('image', ''))
+        mode = data.get('mode', 'vertical')
+        upscale_method = data.get('upscale_method', 'simple')
+        
+        # 画像処理（軽量版：AIアップスケールは無効）
+        processed_image = process_image_sync(image_data, mode)
+        
+        # Base64エンコードして返す
+        result_base64 = base64.b64encode(processed_image).decode('utf-8')
+        
+        # レスポンス
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*',
+            },
+            'body': json.dumps({
                 'success': True,
                 'image': result_base64,
                 'content_type': 'image/jpeg'
-            }).encode('utf-8'))
-            
-        except Exception as e:
-            self.send_response(500)
-            self.send_header('Content-type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps({
+            })
+        }
+        
+    except Exception as e:
+        return {
+            'statusCode': 500,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*',
+            },
+            'body': json.dumps({
                 'success': False,
                 'error': str(e)
-            }).encode('utf-8'))
-
+            })
+        }

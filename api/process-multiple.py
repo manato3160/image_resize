@@ -3,6 +3,7 @@ import json
 import base64
 from io import BytesIO
 from PIL import Image
+import zipfile
 
 # 規定サイズ
 VERTICAL_SIZE = (1080, 1350)  # 幅×高さ
@@ -76,87 +77,105 @@ def process_image_sync(image_data: bytes, mode: str) -> bytes:
     output.seek(0)
     return output.read()
 
-class handler(BaseHTTPRequestHandler):
-    def do_OPTIONS(self):
-        """CORS preflight リクエストを処理"""
-        self.send_response(200)
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
-        self.end_headers()
+def handler(req):
+    """Vercel Serverless Function handler"""
+    # CORS preflight リクエストを処理
+    if req.method == 'OPTIONS':
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'POST, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type',
+            },
+            'body': ''
+        }
     
-    def do_POST(self):
-        try:
-            # リクエストボディを読み込み
-            content_length = int(self.headers.get('Content-Length', 0))
-            post_data = self.rfile.read(content_length)
-            
-            # JSONデータをパース
-            data = json.loads(post_data.decode('utf-8'))
-            
-            # 複数画像データを取得
-            images_data = data.get('images', [])  # [{image: base64, filename: str}, ...]
-            mode = data.get('mode', 'vertical')
-            upscale_method = data.get('upscale_method', 'simple')
-            
-            processed_images = []
-            errors = []
-            
-            for idx, img_data in enumerate(images_data):
-                try:
-                    image_base64 = img_data.get('image', '')
-                    filename = img_data.get('filename', f'image_{idx+1}.jpg')
-                    
-                    # Base64デコード
-                    image_data = base64.b64decode(image_base64)
-                    
-                    # 画像処理
-                    processed_image = process_image_sync(image_data, mode)
-                    
-                    # Base64エンコード
-                    result_base64 = base64.b64encode(processed_image).decode('utf-8')
-                    
-                    processed_images.append({
-                        'filename': filename,
-                        'data': f'data:image/jpeg;base64,{result_base64}',
-                        'content_type': 'image/jpeg'
-                    })
-                except Exception as e:
-                    errors.append(f"{img_data.get('filename', f'ファイル{idx+1}')}: {str(e)}")
-            
-            if len(processed_images) == 0:
-                raise Exception("すべての画像の処理に失敗しました")
-            
-            # ZIPファイルも作成（簡易版：Base64で返す）
-            import zipfile
-            zip_buffer = BytesIO()
-            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                for img in processed_images:
-                    img_bytes = base64.b64decode(img['data'].split(',')[1])
-                    zip_file.writestr(img['filename'], img_bytes)
-            zip_buffer.seek(0)
-            zip_base64 = base64.b64encode(zip_buffer.read()).decode('utf-8')
-            
-            # レスポンス
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps({
+    if req.method != 'POST':
+        return {
+            'statusCode': 405,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*',
+            },
+            'body': json.dumps({'success': False, 'error': 'Method not allowed'})
+        }
+    
+    try:
+        # リクエストボディを取得
+        body = req.body
+        if isinstance(body, str):
+            data = json.loads(body)
+        else:
+            data = json.loads(body.decode('utf-8') if isinstance(body, bytes) else body)
+        
+        # 複数画像データを取得
+        images_data = data.get('images', [])
+        mode = data.get('mode', 'vertical')
+        upscale_method = data.get('upscale_method', 'simple')
+        
+        processed_images = []
+        errors = []
+        
+        for idx, img_data in enumerate(images_data):
+            try:
+                image_base64 = img_data.get('image', '')
+                filename = img_data.get('filename', f'image_{idx+1}.jpg')
+                
+                # Base64デコード
+                image_data = base64.b64decode(image_base64)
+                
+                # 画像処理
+                processed_image = process_image_sync(image_data, mode)
+                
+                # Base64エンコード
+                result_base64 = base64.b64encode(processed_image).decode('utf-8')
+                
+                processed_images.append({
+                    'filename': filename,
+                    'data': f'data:image/jpeg;base64,{result_base64}',
+                    'content_type': 'image/jpeg'
+                })
+            except Exception as e:
+                errors.append(f"{img_data.get('filename', f'ファイル{idx+1}')}: {str(e)}")
+        
+        if len(processed_images) == 0:
+            raise Exception("すべての画像の処理に失敗しました")
+        
+        # ZIPファイルも作成
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for img in processed_images:
+                img_bytes = base64.b64decode(img['data'].split(',')[1])
+                zip_file.writestr(img['filename'], img_bytes)
+        zip_buffer.seek(0)
+        zip_base64 = base64.b64encode(zip_buffer.read()).decode('utf-8')
+        
+        # レスポンス
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*',
+            },
+            'body': json.dumps({
                 'success': True,
                 'images': processed_images,
                 'zip_data': f'data:application/zip;base64,{zip_base64}',
                 'zip_filename': 'processed_images.zip',
                 'errors': errors if errors else None
-            }).encode('utf-8'))
-            
-        except Exception as e:
-            self.send_response(500)
-            self.send_header('Content-type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps({
+            })
+        }
+        
+    except Exception as e:
+        return {
+            'statusCode': 500,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*',
+            },
+            'body': json.dumps({
                 'success': False,
                 'error': str(e)
-            }).encode('utf-8'))
-
+            })
+        }
