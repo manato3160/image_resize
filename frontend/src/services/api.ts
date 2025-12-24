@@ -1,7 +1,8 @@
 import axios from 'axios'
 import { ResizeMode, UpscaleMethod } from '../App'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+// Vercel Functionsを使用する場合は、環境変数が設定されていない場合は相対パスを使用
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
 // 最大ファイルサイズ: 50MB
 const MAX_FILE_SIZE = 50 * 1024 * 1024
@@ -23,37 +24,44 @@ export async function processImage(
     throw new Error('画像ファイルを選択してください')
   }
 
-  const formData = new FormData()
-  formData.append('file', file)
-  formData.append('mode', mode)
-  formData.append('upscale_method', upscaleMethod)
+  // ファイルをBase64エンコード
+  const fileBase64 = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result as string
+      // data:image/...;base64, の部分を除去
+      const base64 = result.split(',')[1]
+      resolve(base64)
+    }
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+
+  // Vercel Functions用のJSON形式で送信
+  const requestData = {
+    image: fileBase64,
+    mode: mode,
+    upscale_method: upscaleMethod
+  }
 
   try {
-    const response = await axios.post(
+    const response = await axios.post<{ success: boolean; image?: string; error?: string; content_type?: string }>(
       `${API_BASE_URL}/api/process`,
-      formData,
+      requestData,
       {
         headers: {
-          'Content-Type': 'multipart/form-data',
+          'Content-Type': 'application/json',
         },
-        responseType: 'blob',
-        timeout: upscaleMethod === 'ai' ? 300000 : 60000, // AI: 5分、単純: 1分
+        timeout: 30000, // 30秒（Vercel Functionsの制限を考慮）
       }
     )
 
-    // レスポンスがエラーの場合（JSONエラーレスポンスがBlobとして返される場合）
-    if (response.data.type === 'application/json') {
-      const errorText = await response.data.text()
-      try {
-        const errorData = JSON.parse(errorText)
-        throw new Error(errorData.detail || '画像処理に失敗しました')
-      } catch {
-        throw new Error('画像処理に失敗しました')
-      }
+    if (!response.data.success || !response.data.image) {
+      throw new Error(response.data.error || '画像処理に失敗しました')
     }
 
-    // BlobをURLに変換
-    const imageUrl = URL.createObjectURL(response.data)
+    // Base64データをBlob URLに変換
+    const imageUrl = `data:${response.data.content_type || 'image/jpeg'};base64,${response.data.image}`
     return imageUrl
   } catch (error) {
     if (axios.isAxiosError(error)) {
@@ -76,7 +84,7 @@ export async function processImage(
         throw new Error(errorMessage)
       } else if (error.request) {
         throw new Error(
-          'サーバーに接続できませんでした。バックエンドが起動しているか確認してください。'
+          'サーバーに接続できませんでした。APIエンドポイントを確認してください。'
         )
       } else if (error.code === 'ECONNABORTED') {
         throw new Error('リクエストがタイムアウトしました。画像が大きすぎる可能性があります。')
@@ -130,22 +138,42 @@ export async function processMultipleImages(
     }
   }
 
-  const formData = new FormData()
-  files.forEach((file) => {
-    formData.append('files', file)
-  })
-  formData.append('mode', mode)
-  formData.append('upscale_method', upscaleMethod)
+  // すべてのファイルをBase64エンコード
+  const imagesData = await Promise.all(
+    files.map(async (file) => {
+      const fileBase64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => {
+          const result = reader.result as string
+          const base64 = result.split(',')[1]
+          resolve(base64)
+        }
+        reader.onerror = reject
+        reader.readAsDataURL(file)
+      })
+      return {
+        image: fileBase64,
+        filename: file.name
+      }
+    })
+  )
+
+  // Vercel Functions用のJSON形式で送信
+  const requestData = {
+    images: imagesData,
+    mode: mode,
+    upscale_method: upscaleMethod
+  }
 
   try {
     const response = await axios.post<ProcessMultipleImagesResult>(
       `${API_BASE_URL}/api/process-multiple`,
-      formData,
+      requestData,
       {
         headers: {
-          'Content-Type': 'multipart/form-data',
+          'Content-Type': 'application/json',
         },
-        timeout: upscaleMethod === 'ai' ? 600000 : 300000, // AI: 10分、単純: 5分（複数画像のため長めに）
+        timeout: 60000, // 60秒（Vercel Functionsの制限を考慮）
       }
     )
 
